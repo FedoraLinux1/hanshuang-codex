@@ -14,11 +14,15 @@
 #   .\install-doubao.ps1 -SourcePrompt .\x.md     # 指定提示词
 #   .\install-doubao.ps1 -Status                  # 看当前全局记忆
 #   .\install-doubao.ps1 -Uninstall               # 还原注入前的记忆
+#   .\install-doubao.ps1 -RestoreMemory           # 只装回原始记忆（界面按钮走这条）
 
 param(
     [string]$SourcePrompt,
     [string]$Version = 'v4',
     [switch]$Uninstall,
+    # 只把云端全局记忆还原成注入前的原文，其余一概不动。
+    # 界面上的「装回原始记忆」按钮走这条路径；豆包没有技能库，效果与 -Uninstall 相同。
+    [switch]$RestoreMemory,
     [switch]$Status,
     [switch]$NoLaunch,
     [int]$Port = 9222
@@ -48,10 +52,13 @@ function Write-Log([string]$Text) {
 
 # ---------- 提示词来源 ----------
 $promptMap = @{ 'v4' = '寒霜v4-claude.md'; 'v3' = '寒霜v3.md'; 'v5' = '寒霜v5.md' }
-if (-not $SourcePrompt) { $SourcePrompt = Join-Path $Root $promptMap[$Version] }
-if (-not (Test-Path -LiteralPath $SourcePrompt)) { throw "提示词文件不存在: $SourcePrompt" }
-$srcText = Read-Utf8 $SourcePrompt
-$srcHash = (Get-FileHash -LiteralPath $SourcePrompt -Algorithm SHA256).Hash
+# 本构建不再随包分发提示词：卸载/还原模式跳过提示词解析与读取。
+if (-not ($Uninstall -or $RestoreMemory)) {
+    if (-not $SourcePrompt) { $SourcePrompt = Join-Path $Root $promptMap[$Version] }
+    if (-not (Test-Path -LiteralPath $SourcePrompt)) { throw "提示词文件不存在: $SourcePrompt" }
+    $srcText = Read-Utf8 $SourcePrompt
+    $srcHash = (Get-FileHash -LiteralPath $SourcePrompt -Algorithm SHA256).Hash
+}
 
 $stateDir = Join-Path $env:USERPROFILE '.doubao\managed-prompts'
 $stateFile = Join-Path $stateDir 'state.json'
@@ -241,8 +248,8 @@ if ($Status) {
     exit 0
 }
 
-# 卸载
-if ($Uninstall) {
+# 卸载 / 装回原始记忆
+if ($Uninstall -or $RestoreMemory) {
     $done = @()
     if (Test-Path -LiteralPath $backupFile) {
         $bak = Read-Utf8 $backupFile
@@ -280,7 +287,7 @@ if ($Uninstall) {
         }
     }
 
-    Write-Host "`n[完成] 卸载" -ForegroundColor Green
+    Write-Host $(if ($RestoreMemory) { "`n[完成] 装回原始记忆" } else { "`n[完成] 卸载" }) -ForegroundColor Green
     $done | ForEach-Object { Write-Host "  - $_" }
     # $exe 可能已经是 app\Doubao.exe（进程路径优先），别拼成 app\app\
     $appExe = if (-not $exe) { 'Doubao.exe' }

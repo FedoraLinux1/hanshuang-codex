@@ -8,12 +8,12 @@ export function TutorialPage() {
       <div className="settings-card-block">
         <div className="settings-card-heading-row">
           <div>
-            <h2 className="settings-card-heading">激活方式</h2>
+            <h2 className="settings-card-heading">说明</h2>
             <p className="settings-card-description">
-              注入后输入激活词即可生效；上下文被压缩后重新激活一次。
+              就三步：填提示词 → 点安装 → 想退回去就点卸载。装之前会自动备份，随时能还原。
             </p>
           </div>
-          <span className="badge badge-neutral">激活词「寒霜」</span>
+          <span className="badge badge-neutral">共 9 个目标</span>
         </div>
 
         <div className="panel-card" style={{ padding: "16px 18px" }}>
