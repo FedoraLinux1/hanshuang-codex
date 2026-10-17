@@ -306,6 +306,23 @@ function send(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 }
 
+/**
+   中文 Windows 上 PowerShell 子进程按系统代码页（GBK/936）写标准输出，
+   直接按 UTF-8 解会整段乱码（用户看到的「?????」日志就是这么来的）。
+   这里先按 UTF-8 严格解码；只要有一个非法字节就退回 GBK —— 两种来源都能读。
+*/
+function decodeConsoleOutput(buf) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buf);
+  } catch {
+    try {
+      return new TextDecoder("gbk").decode(buf);
+    } catch {
+      return buf.toString("utf8");
+    }
+  }
+}
+
 function killChild() {
   if (!child) return;
   const pid = child.pid;
@@ -326,9 +343,27 @@ function runPowerShell(args, label, timeoutMs) {
     if (childTimer) clearTimeout(childTimer);
 
     let out = "";
+    // 累计原始字节再整段解码：多字节中文字符可能被 chunk 边界切开，逐块解码会碎成乱码
+    let rawOut = Buffer.alloc(0);
+    let sentChars = 0;
     let timedOut = false;
     childLabel = label;
     send("tool:status", { label, state: "running" });
+
+    const onOutput = (buf) => {
+      rawOut = Buffer.concat([rawOut, buf]);
+      const text = decodeConsoleOutput(rawOut);
+      const delta = text.slice(sentChars);
+      sentChars = text.length;
+      if (rawOut.length > 4 * 1024 * 1024) {
+        // 超长输出：丢掉已经发过的前缀，免得内存一直涨
+        rawOut = rawOut.subarray(rawOut.length - 1024 * 1024);
+        sentChars = decodeConsoleOutput(rawOut).length;
+      }
+      if (!delta) return;
+      out = (out + delta).slice(-60000);
+      send("tool:log", { label, text: delta });
+    };
 
     const ps = spawn(
       "powershell.exe",
@@ -337,16 +372,8 @@ function runPowerShell(args, label, timeoutMs) {
     );
     child = ps;
 
-    ps.stdout.on("data", (buf) => {
-      const text = buf.toString("utf8");
-      out = (out + text).slice(-60000);
-      send("tool:log", { label, text });
-    });
-    ps.stderr.on("data", (buf) => {
-      const text = buf.toString("utf8");
-      out = (out + text).slice(-60000);
-      send("tool:log", { label, text });
-    });
+    ps.stdout.on("data", onOutput);
+    ps.stderr.on("data", onOutput);
 
     childTimer = setTimeout(() => {
       timedOut = true;
@@ -622,8 +649,13 @@ function registerIpc() {
       */
       const ps = spawn("powershell.exe", ["-NoProfile", "-Command", cmd], { windowsHide: true });
       let out = "";
-      ps.stdout.on("data", (buf) => (out += buf.toString("utf8")));
-      ps.stderr.on("data", (buf) => (out += buf.toString("utf8")));
+      let raw = Buffer.alloc(0);
+      const onChunk = (buf) => {
+        raw = Buffer.concat([raw, buf]);
+        out = decodeConsoleOutput(raw);
+      };
+      ps.stdout.on("data", onChunk);
+      ps.stderr.on("data", onChunk);
       ps.on("close", (code) => {
         const text = out.trim();
         const launched = /^launched:/m.test(text);

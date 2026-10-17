@@ -87,6 +87,18 @@ function Get-Sha([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return '' }
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
 }
+# 取 Memory Block 段正文。结束锚点必须盯 RAW_JSON 注释，**不能**盯「第一个空行+---」：
+# 提示词正文自带 markdown 分隔线（实测这份有 17 个），非贪婪正则会在第一个 --- 处截断,
+# 后果是校验误报「memoryBlock 不可解析」，卸载/清理也只清掉前半段。
+function Get-MemoryBlockBody([string]$Text) {
+    if ([string]::IsNullOrEmpty($Text)) { return '' }
+    $m = [regex]::Match($Text, '(?s)## Memory Block[ \t]*\r?\n\r?\n(?<b>.*?)\r?\n\r?\n---\r?\n\r?\n<!--\s*RAW_JSON_START')
+    if ($m.Success) { return $m.Groups['b'].Value }
+    # 兜底：没有 RAW_JSON 标记的旧格式，只能按第一个分隔线截断
+    $m2 = [regex]::Match($Text, '(?s)## Memory Block[ \t]*\r?\n\r?\n(?<b>.*?)\r?\n\r?\n---')
+    if ($m2.Success) { return $m2.Groups['b'].Value }
+    return ''
+}
 function Set-ArchiveReadOnly([string]$Path, [bool]$ReadOnly) {
     # 只读锁属于加固项：文件被运行中的应用占用 / 权限不足时会失败，
     # 这种情况只告警不中断（守护线程仍会按需补注入）
@@ -321,7 +333,7 @@ if ($Status) {
     foreach ($af in $live) {
         $archText = Read-Utf8 $af
         $ver = [regex]::Match($archText, '(?m)^>\s*Version:\s*(\d+)').Groups[1].Value
-        $mb = [regex]::Match($archText, '(?s)## Memory Block\r?\n\r?\n(.*?)\r?\n\r?\n---').Groups[1].Value
+        $mb = Get-MemoryBlockBody $archText
         Write-Host "  云记忆档案          : $af"
         Write-Host "  档案 Version        : $(if ($ver) { $ver } else { '-' })"
         Write-Host "  memoryBlock 字符数  : $($mb.Trim().Length)  (上限 10000)"
@@ -372,7 +384,7 @@ if ($Uninstall -or $RestoreMemory) {
             # 同 MEMORY.md：无备份时不能默认「档案是本工具建的」。安装时档案可能还不存在，
             # 而现在的段内容已经不是提示词（记忆本来就存在 RAW_JSON 里，或 WorkBuddy 后续
             # 写入了新记忆）—— 这时清空等于删用户的记忆，必须原样保留。
-            $curBlock = [regex]::Match((Read-Utf8 $af), '(?s)## Memory Block\r?\n\r?\n(.*?)\r?\n\r?\n---').Groups[1].Value.Trim()
+    $curBlock = (Get-MemoryBlockBody (Read-Utf8 $af)).Trim()
             if ($curBlock -ne $unSrc) {
                 $done += "档案已保留（无备份且内容不是提示词，是用户记忆）: $(Split-Path -Leaf $af)"
             } else {
@@ -483,7 +495,7 @@ if ($archFiles.Count -gt 0) {
         $afBak = "$af.bak-inject"
         if ((Test-Path -LiteralPath $af) -and -not (Test-Path -LiteralPath $afBak)) {
             try {
-                $oldBlock = [regex]::Match((Read-Utf8 $af), '(?s)## Memory Block\r?\n\r?\n(.*?)\r?\n\r?\n---').Groups[1].Value.Trim()
+    $oldBlock = (Get-MemoryBlockBody (Read-Utf8 $af)).Trim()
                 if ($oldBlock -ne $srcText.Trim()) { Copy-Item -LiteralPath $af -Destination $afBak -Force }
             } catch { Write-Log "读取/备份档案失败(继续): $af" }
         }
@@ -603,7 +615,7 @@ Write-Host "`n[校验]" -ForegroundColor Cyan
 $ok = $true
 foreach ($af in @($archFiles | Where-Object { Test-Path -LiteralPath $_ })) {
     $t = Read-Utf8 $af
-    $blockOk = [regex]::Match($t, '(?s)## Memory Block\r?\n\r?\n(.*?)\r?\n\r?\n---').Groups[1].Value.Trim() -eq $srcText.Trim()
+    $blockOk = (Get-MemoryBlockBody $t).Trim() -eq $srcText.Trim()
     $rawOk = $t -match '"memoryBlock"'
     Write-Host "  档案 memoryBlock 可解析 : $blockOk  ($(Split-Path -Leaf $af))"
     Write-Host "  档案 RAW_JSON 存在      : $rawOk"

@@ -711,13 +711,24 @@ foreach ($p in $plan) {
         # 在下面的 RAW_JSON 里。照旧无条件清空就会把刚还原回来的记忆整段吃掉
         # （实测：888 字符的档案被吃到只剩 99 字符，RAW_JSON 连同用户记忆一起没了）。
         # 只清「确实是提示词」的段，认不出就一个字节都不动。
-        $body = [regex]::Match($t, '(?s)## Memory Block[ \t]*\r?\n(?<b>.*?)(?=\r?\n\r?\n---|\z)').Groups['b'].Value
+        # 结束锚点盯 RAW_JSON 注释，不盯「第一个空行+---」：提示词正文自带 markdown
+        # 分隔线（实测 17 个），非贪婪正则会在第一个 --- 处截断，于是只清掉前半段、后面
+        # 残留半截提示词。没有 RAW_JSON 标记的旧档案才回退到旧写法。
+        $strictPat = '(?s)## Memory Block[ \t]*\r?\n\r?\n(?<b>.*?)\r?\n\r?\n---\r?\n\r?\n<!--\s*RAW_JSON_START'
+        $m = [regex]::Match($t, $strictPat)
+        $strict = $m.Success
+        if (-not $strict) { $m = [regex]::Match($t, '(?s)## Memory Block[ \t]*\r?\n(?<b>.*?)(?=\r?\n\r?\n---|\z)') }
+        $body = $m.Groups['b'].Value
         if (-not (Test-InjectionText $body)) { break }
         # WorkBuddyGuard 写入后会 chmod 444，先解只读
         try { $item = Get-Item -LiteralPath $p.Path -Force; if ($item.IsReadOnly) { $item.IsReadOnly = $false } } catch { }
         # 组 1 用 [ \t]* 而不是 \s*：\s* 会把分隔空行一并吞掉，段是空的时候前瞻就找不到
         # (?=\r?\n\r?\n---)，.*? 于是一路吃到文件尾，把 RAW_JSON 整段删掉。
-        $new = [regex]::Replace($t, '(?s)(## Memory Block[ \t]*\r?\n)\r?\n.*?(?=\r?\n\r?\n---|\z)', "`$1`r`n")
+        if ($strict) {
+            $new = [regex]::Replace($t, '(?s)(## Memory Block[ \t]*\r?\n)\r?\n.*?(?=\r?\n\r?\n---\r?\n\r?\n<!--\s*RAW_JSON_START)', "`$1`r`n")
+        } else {
+            $new = [regex]::Replace($t, '(?s)(## Memory Block[ \t]*\r?\n)\r?\n.*?(?=\r?\n\r?\n---|\z)', "`$1`r`n")
+        }
         [IO.File]::WriteAllText($p.Path, $new, [Text.UTF8Encoding]::new($false))
       }
       'WorkBuddy state' { Remove-Item -LiteralPath $p.Path -Force -ErrorAction Stop }
