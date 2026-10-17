@@ -10,10 +10,10 @@ export function TutorialPage() {
           <div>
             <h2 className="settings-card-heading">说明</h2>
             <p className="settings-card-description">
-              就三步：填提示词 → 点安装 → 想退回去就点卸载。装之前会自动备份，随时能还原。
+              填提示词 → 点安装 → 输入 lab： 就能用。不想要了点卸载，自动还原回去。
             </p>
           </div>
-          <span className="badge badge-neutral">共 9 个目标</span>
+          <span className="badge badge-neutral">3 步上手</span>
         </div>
 
         <div className="panel-card" style={{ padding: "16px 18px" }}>
