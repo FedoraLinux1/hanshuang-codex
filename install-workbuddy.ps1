@@ -71,6 +71,11 @@ if ($PSVersionTable.PSVersion.Major -lt 5) {
 }
 $Root = if ($ScriptRoot) { $ScriptRoot } else { $PSScriptRoot }
 if (-not $Root) { $Root = Split-Path -Parent $MyInvocation.MyCommand.Path }
+# 统一 UTF-8 输出：避免按系统代码页（GBK/437…）写 stdout 导致界面日志乱码
+try {
+    $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+    [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+} catch { }
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $MEM_VERSION = 999999      # 高版本号：程序写档案时 incoming < existing 会被判 stale_version 拒绝
 $SKILL_MANIFEST = '.hanshuang-skills.json'

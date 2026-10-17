@@ -34,6 +34,11 @@ $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $Root = if ($ScriptRoot) { $ScriptRoot } else { $PSScriptRoot }
 if (-not $Root) { $Root = Split-Path -Parent $MyInvocation.MyCommand.Path }
 
+# 统一 UTF-8 输出：避免按系统代码页（GBK/437…）写 stdout 导致界面日志乱码
+try {
+    $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+    [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+} catch { }
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 function Read-Utf8([string]$Path) { return [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8) }
 function Write-Utf8([string]$Path, [string]$Text) {
@@ -52,8 +57,9 @@ function Write-Log([string]$Text) {
 
 # ---------- 提示词来源 ----------
 $promptMap = @{ 'v4' = '寒霜v4-claude.md'; 'v3' = '寒霜v3.md'; 'v5' = '寒霜v5.md' }
-# 本构建不再随包分发提示词：卸载/还原模式跳过提示词解析与读取。
-if (-not ($Uninstall -or $RestoreMemory)) {
+# 本构建不再随包分发提示词：卸载/还原/查状态模式都跳过提示词解析与读取
+# （-Status 只读云端记忆，不需要提示词；以前要求它必须存在，状态查询直接报「提示词文件不存在」）。
+if (-not ($Uninstall -or $RestoreMemory -or $Status)) {
     if (-not $SourcePrompt) { $SourcePrompt = Join-Path $Root $promptMap[$Version] }
     if (-not (Test-Path -LiteralPath $SourcePrompt)) { throw "提示词文件不存在: $SourcePrompt" }
     $srcText = Read-Utf8 $SourcePrompt
@@ -211,21 +217,37 @@ function Write-AgentsMd([string]$WsUrl, [string]$Content) {
 # ---------- 主流程 ----------
 Write-Host "== 豆包破甲 ==" -ForegroundColor Cyan
 $exe = Resolve-DoubaoExe
-Write-Host "  豆包程序 : $(if ($exe) { $exe } else { '未找到（可用 -DoubaoExe 指定）' })"
+    Write-Host "  豆包程序 : $(if ($exe) { $exe } else { '未找到（请确认已安装豆包客户端）' })"
 Write-Host "  提示词   : $SourcePrompt"
 Write-Host "  调试端口 : $Port"
 
 if (-not (Test-DebugPort)) {
-    if ($NoLaunch) { throw "豆包没有以调试模式运行（$Port 不通），且指定了 -NoLaunch" }
+    if ($NoLaunch -or $Status) {
+        # -Status 是只读查询：没开调试端口就直说，不替用户重启客户端；
+        # -NoLaunch 是调用方明确要求别启动客户端。
+        Write-Host "  [×] 豆包没有以调试模式运行（端口 $Port 不通）。请先打开豆包客户端，再点安装。" -ForegroundColor Red
+        Write-Log "Abort: debug port $Port closed (NoLaunch=$NoLaunch Status=$Status)"
+        exit 1
+    }
     $running = Get-DoubaoProcs
     if ($running.Count -gt 0) {
         Write-Host "  [i] 豆包正在运行但没有开调试端口，重启到调试模式（聊天记录在云端，不会丢）" -ForegroundColor Yellow
         $running | Stop-Process -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 2
     }
-    if (-not $exe) { throw "找不到豆包程序，无法自动启动。请手动运行：Doubao.exe --remote-debugging-port=$Port" }
+    if (-not $exe) {
+        Write-Host "  [×] 没找到豆包客户端，无法自动打开调试模式。" -ForegroundColor Red
+        Write-Host "      请先安装并登录豆包，保持它开着，再点一次安装。" -ForegroundColor Yellow
+        Write-Log "Abort: Doubao.exe not found"
+        exit 1
+    }
     Write-Host "  [i] 启动豆包（调试模式）..." -ForegroundColor Yellow
-    if (-not (Start-DoubaoDebug $exe)) { throw "豆包启动后 $Port 仍不通；如果界面停在登录页，先登录再重试" }
+    if (-not (Start-DoubaoDebug $exe)) {
+        Write-Host "  [×] 豆包已启动，但调试端口 $Port 仍然不通。" -ForegroundColor Red
+        Write-Host "      如果豆包界面停在登录页，先登录然后重试。" -ForegroundColor Yellow
+        Write-Log "Abort: debug port $Port still closed after launch"
+        exit 1
+    }
 }
 
 $target = Wait-DoubaoTarget 60

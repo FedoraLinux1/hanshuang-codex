@@ -20,6 +20,12 @@ Set-StrictMode -Off
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
+# 统一 UTF-8 输出：中文 Windows 的 PowerShell 默认按 GBK 写 stdout，别的区域设置更会把
+# 中文直接变成 '?'，界面日志就整段乱码。显式设成 UTF-8 后，调用方（桌面程序）也按 UTF-8 解。
+try {
+    $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+    [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+} catch { }
 $Utf8 = New-Object System.Text.UTF8Encoding($false)
 
 # 目标已是最新时跳过整棵树的复制。重装时绝大多数文件没变，跳过能省掉全部磁盘写入 ——
